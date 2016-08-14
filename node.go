@@ -60,6 +60,13 @@ func DeserializeNode(d []byte) (*Node, error) {
 // The depth specifies the number of non-leaf layers
 // of the tree, so a depth of 0 implies a single node.
 func NewNodeBinTree(depth, inSize, hiddenSize, classCount int) *Node {
+	return NewNode(depth, 2, inSize, hiddenSize, classCount)
+}
+
+// NewNode creates a tree of the given depth where each
+// node has the given number of branches.
+// The depth specifies the number of non-leaf layers.
+func NewNode(depth, branches, inSize, hiddenSize, classCount int) *Node {
 	if depth == 0 {
 		net := neuralnet.Network{
 			&neuralnet.DenseLayer{
@@ -87,17 +94,18 @@ func NewNodeBinTree(depth, inSize, hiddenSize, classCount int) *Node {
 		&neuralnet.HyperbolicTangent{},
 		&neuralnet.DenseLayer{
 			InputCount:  hiddenSize,
-			OutputCount: 2,
+			OutputCount: branches,
 		},
 		&neuralnet.LogSoftmaxLayer{},
 	}
 	net.Randomize()
+	children := make([]*Node, branches)
+	for i := range children {
+		children[i] = NewNode(depth-1, branches, inSize, hiddenSize, classCount)
+	}
 	return &Node{
-		Network: net,
-		Children: []*Node{
-			NewNodeBinTree(depth-1, inSize, hiddenSize, classCount),
-			NewNodeBinTree(depth-1, inSize, hiddenSize, classCount),
-		},
+		Network:  net,
+		Children: children,
 	}
 }
 
