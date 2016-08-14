@@ -5,6 +5,7 @@ package neuraltree
 
 import (
 	"errors"
+	"math"
 
 	"github.com/unixpickle/autofunc"
 	"github.com/unixpickle/serializer"
@@ -19,7 +20,16 @@ func init() {
 // A Node makes decisions by running sub-nodes or
 // evaluating a leaf neural network.
 type Node struct {
-	Network  neuralnet.Network
+	// Network outputs branching or classification
+	// probabilities.
+	// For leaf nodes, this should output the logs
+	// of the probabilities of each class.
+	// For non-leaf nodes, this should output the
+	// logs of the probabilities of each child.
+	Network neuralnet.Network
+
+	// Children is the list of child nodes.
+	// If this is empty, the node is a leaf.
 	Children []*Node
 }
 
@@ -61,7 +71,7 @@ func NewNodeBinTree(depth, inSize, hiddenSize, classCount int) *Node {
 				InputCount:  hiddenSize,
 				OutputCount: classCount,
 			},
-			&neuralnet.SoftmaxLayer{},
+			&neuralnet.LogSoftmaxLayer{},
 		}
 		net.Randomize()
 		return &Node{
@@ -79,7 +89,7 @@ func NewNodeBinTree(depth, inSize, hiddenSize, classCount int) *Node {
 			InputCount:  hiddenSize,
 			OutputCount: 2,
 		},
-		&neuralnet.SoftmaxLayer{},
+		&neuralnet.LogSoftmaxLayer{},
 	}
 	net.Randomize()
 	return &Node{
@@ -106,11 +116,11 @@ func (n *Node) Apply(input autofunc.Result) autofunc.Result {
 		for i := 0; i < len(w.Output()); i++ {
 			weight := autofunc.Slice(w, i, i+1)
 			childOut := n.Children[i].Apply(input)
-			weighted := autofunc.ScaleFirst(childOut, weight)
+			weighted := autofunc.AddFirst(childOut, weight)
 			if res == nil {
 				res = weighted
 			} else {
-				res = autofunc.Add(res, weighted)
+				res = logExpSum(res, weighted)
 			}
 		}
 		return res
@@ -131,11 +141,11 @@ func (n *Node) ApplyR(rv autofunc.RVector, input autofunc.RResult) autofunc.RRes
 		for i := 0; i < len(w.Output()); i++ {
 			weight := autofunc.SliceR(w, i, i+1)
 			childOut := n.Children[i].ApplyR(rv, input)
-			weighted := autofunc.ScaleFirstR(childOut, weight)
+			weighted := autofunc.AddFirstR(childOut, weight)
 			if res == nil {
 				res = weighted
 			} else {
-				res = autofunc.AddR(res, weighted)
+				res = logExpSumR(res, weighted)
 			}
 		}
 		return res
@@ -167,4 +177,23 @@ func (n *Node) Serialize() ([]byte, error) {
 	}
 	list[len(list)-1] = n.Network
 	return serializer.SerializeSlice(list)
+}
+
+// logExpSum computes log(e^v1 + e^v2)
+func logExpSum(v1, v2 autofunc.Result) autofunc.Result {
+	maxVal := math.Max(v1.Output().MaxAbs(), v2.Output().MaxAbs())
+	exp1 := autofunc.Exp{}.Apply(autofunc.AddScaler(v1, -maxVal))
+	exp2 := autofunc.Exp{}.Apply(autofunc.AddScaler(v2, -maxVal))
+	expSum := autofunc.Add(exp1, exp2)
+	return autofunc.AddScaler(autofunc.Log{}.Apply(expSum), maxVal)
+}
+
+// logExpSumR computes log(e^v1 + e^v2)
+func logExpSumR(v1, v2 autofunc.RResult) autofunc.RResult {
+	rv := autofunc.RVector{}
+	maxVal := math.Max(v1.Output().MaxAbs(), v2.Output().MaxAbs())
+	exp1 := autofunc.Exp{}.ApplyR(rv, autofunc.AddScalerR(v1, -maxVal))
+	exp2 := autofunc.Exp{}.ApplyR(rv, autofunc.AddScalerR(v2, -maxVal))
+	expSum := autofunc.AddR(exp1, exp2)
+	return autofunc.AddScalerR(autofunc.Log{}.ApplyR(rv, expSum), maxVal)
 }
